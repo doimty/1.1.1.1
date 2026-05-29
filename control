@@ -1,0 +1,9 @@
+Package: com.ash.liquidglassswitch
+Name: LiquidSwitch
+Version: 0.1
+Architecture: iphoneos-arm64
+Description: 全局液态玻璃 UISwitch 样式，适用于 Dopamine rootless 越狱。
+Maintainer: ash
+Author: ash
+Section: Tweaks
+Depends: mobilesubstrate (>= 0.9.5000), preferenceloader (>= 2.2.3)
