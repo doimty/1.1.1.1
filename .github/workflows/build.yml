@@ -63,7 +63,7 @@ jobs:
         run: |
           export PATH="/opt/homebrew/opt/make/libexec/gnubin:$PATH"
           make clean SDKVERSION=16.5
-          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME="rootless" SDKVERSION=16.5
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=$THEOS_PACKAGE_SCHEME SDKVERSION=16.5
 
       - name: Upload deb packages
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
