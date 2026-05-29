@@ -20,12 +20,18 @@ on:
 
 jobs:
   package:
-    name: Package
+    name: Package (${{ matrix.scheme }})
     runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        scheme:
+          - rootless
+          - roothide
 
     env:
       THEOS: ${{ github.workspace }}/theos
-      THEOS_PACKAGE_SCHEME: rootless
+      THEOS_PACKAGE_SCHEME: ${{ matrix.scheme }}
       FINALPACKAGE: 1
 
     steps:
@@ -62,6 +68,6 @@ jobs:
       - name: Upload deb packages
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: liquid-switch-packages
+          name: liquid-switch-${{ matrix.scheme }}-packages
           path: packages/*
           if-no-files-found: error
