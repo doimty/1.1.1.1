@@ -6,8 +6,8 @@
 #import "Shared/LGSharedSupport.h"
 
 // Global UISwitch wrapper using the LiquidAss Metal glass renderer.
-static NSString *const kLASGPrefsDomain = @"com.ash.liquidglassswitch";
-static CFStringRef const kLASGPrefsChangedNotification = CFSTR("com.ash.liquidglassswitch/preferences.changed");
+static NSString *const kLASGPrefsDomain = @"com.tougee.liquidglassswitch";
+static CFStringRef const kLASGPrefsChangedNotification = CFSTR("com.tougee.liquidglassswitch/preferences.changed");
 
 static BOOL gLASGEnabled = YES;
 static const void *kLASGOverlayKey = &kLASGOverlayKey;

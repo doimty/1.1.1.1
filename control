@@ -1,4 +1,4 @@
-Package: com.ash.liquidglassswitch
+Package: com.tougee.liquidglassswitch
 Name: LiquidSwitch
 Version: 0.1
 Architecture: iphoneos-arm64
