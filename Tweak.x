@@ -831,7 +831,8 @@ static void LASGPreferencesChanged(CFNotificationCenterRef center, void *observe
         // Switch 从视图层级移除，清理 overlay
         LASGRemoveOverlay(self);
     } else {
-        // 切换到新父视图，强制刷新 overlay 状态
+        // 切换到新父视图，先移除旧 overlay 再重新应用
+        LASGRemoveOverlay(self);
         LASGApplySwitchStyling(self, NO);
     }
 }
