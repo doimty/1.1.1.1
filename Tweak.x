@@ -298,6 +298,8 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
 @property (nonatomic, assign) BOOL hasRenderedState;
 - (void)syncWithSwitch:(UISwitch *)switchView progress:(CGFloat)progress pressed:(BOOL)pressed animated:(BOOL)animated;
 - (void)applyVisualsAllowingImplicitAnimations:(BOOL)allowAnimations;
+- (LGSharedGlassView *)ensureGlassThumbView;
+- (void)releaseGlassThumbViewIfIdle;
 - (void)stopDisplayLink;
 @end
 
@@ -333,25 +335,6 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
     _contractedThumbView = [[UIView alloc] initWithFrame:CGRectZero];
     _contractedThumbView.userInteractionEnabled = NO;
     [self addSubview:_contractedThumbView];
-
-    LGEnsureSharedGlassPipelinesReady();
-    _glassThumbView = [[LGSharedGlassView alloc] initWithFrame:CGRectZero sourceImage:nil sourceOrigin:CGPointZero];
-    _glassThumbView.userInteractionEnabled = NO;
-    _glassThumbView.releasesSourceAfterUpload = YES;
-    _glassThumbView.bezelWidth = 6.0;
-    _glassThumbView.glassThickness = 20.0;
-    _glassThumbView.refractionScale = 1.5;
-    _glassThumbView.refractiveIndex = 1.5;
-    _glassThumbView.specularOpacity = 0.04;
-    _glassThumbView.blur = 0.0;
-    _glassThumbView.sourceScale = 1.0;
-    _glassThumbView.alpha = 0.0;
-    _glassThumbView.hidden = YES;
-    [self addSubview:_glassThumbView];
-
-    _glassInsetShadowView = [[LASGSwitchInsetShadowView alloc] initWithFrame:_glassThumbView.bounds];
-    _glassInsetShadowView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [_glassThumbView addSubview:_glassInsetShadowView];
 
     return self;
 }
@@ -397,12 +380,14 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
     self.contractedThumbView.layer.shadowRadius = 0.0;
     self.contractedThumbView.layer.shadowOffset = CGSizeZero;
 
-    self.glassThumbView.layer.shadowColor = UIColor.clearColor.CGColor;
-    self.glassThumbView.layer.shadowOpacity = 0.0;
-    self.glassThumbView.layer.shadowRadius = 0.0;
-    self.glassThumbView.layer.shadowOffset = CGSizeZero;
-    self.glassThumbView.specularOpacity = darkMode ? 0.02 : 0.0;
-    self.glassInsetShadowView.alpha = 0.0;
+    if (self.glassThumbView) {
+        self.glassThumbView.layer.shadowColor = UIColor.clearColor.CGColor;
+        self.glassThumbView.layer.shadowOpacity = 0.0;
+        self.glassThumbView.layer.shadowRadius = 0.0;
+        self.glassThumbView.layer.shadowOffset = CGSizeZero;
+        self.glassThumbView.specularOpacity = darkMode ? 0.02 : 0.0;
+        self.glassInsetShadowView.alpha = 0.0;
+    }
 }
 
 - (BOOL)shouldRenderGlassBackdrop {
@@ -483,7 +468,7 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
     BOOL settledExpansion = fabs(self.targetExpansion - self.renderedExpansion) < 0.01;
     if (!self.pressed && settledProgress && settledWidth && settledHeight && settledExpansion && !self.fillAnimating) {
         [self syncRenderedStateImmediately];
-        [self updateVisuals];
+        [self applyVisualsAllowingImplicitAnimations:NO];
         [self stopDisplayLink];
     }
 }
@@ -494,8 +479,11 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
         self.cachedBackdropImage = nil;
         self.cachedBackdropKey = nil;
         self.glassThumbView.sourceImage = nil;
+        [self releaseGlassThumbViewIfIdle];
         return;
     }
+    LGSharedGlassView *glassThumbView = [self ensureGlassThumbView];
+    if (!glassThumbView) return;
     CGRect trackFrame = LASGTrackFrameForBounds(self.bounds);
     CGRect captureRect = CGRectInset(trackFrame, -20.0, -20.0);
     UIColor *backgroundColor = UIColor.clearColor;
@@ -521,7 +509,7 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
         if (fabs(self.cachedBackdropOrigin.x - origin.x) > 0.001 ||
             fabs(self.cachedBackdropOrigin.y - origin.y) > 0.001) {
             self.cachedBackdropOrigin = origin;
-            self.glassThumbView.sourceOrigin = origin;
+            glassThumbView.sourceOrigin = origin;
         }
         return;
     }
@@ -538,9 +526,45 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
     self.cachedBackdropImage = image;
     self.cachedBackdropKey = cacheKey;
     self.cachedBackdropOrigin = origin;
-    self.glassThumbView.sourceImage = image;
-    self.glassThumbView.sourceOrigin = origin;
-    [self.glassThumbView scheduleDraw];
+    glassThumbView.sourceImage = image;
+    glassThumbView.sourceOrigin = origin;
+    [glassThumbView scheduleDraw];
+}
+
+- (LGSharedGlassView *)ensureGlassThumbView {
+    if (self.glassThumbView) return self.glassThumbView;
+
+    LGEnsureSharedGlassPipelinesReady();
+    LGSharedGlassView *glassThumbView = [[LGSharedGlassView alloc] initWithFrame:CGRectZero sourceImage:nil sourceOrigin:CGPointZero];
+    if (!glassThumbView) return nil;
+    glassThumbView.userInteractionEnabled = NO;
+    glassThumbView.releasesSourceAfterUpload = YES;
+    glassThumbView.bezelWidth = 6.0;
+    glassThumbView.glassThickness = 20.0;
+    glassThumbView.refractionScale = 1.5;
+    glassThumbView.refractiveIndex = 1.5;
+    glassThumbView.specularOpacity = LASGIsDarkMode(self.hostSwitch.traitCollection) ? 0.02 : 0.0;
+    glassThumbView.blur = 0.0;
+    glassThumbView.sourceScale = 1.0;
+    glassThumbView.alpha = 0.0;
+    glassThumbView.hidden = YES;
+    self.glassThumbView = glassThumbView;
+    [self insertSubview:glassThumbView aboveSubview:self.contractedThumbView];
+
+    LASGSwitchInsetShadowView *insetShadowView = [[LASGSwitchInsetShadowView alloc] initWithFrame:glassThumbView.bounds];
+    insetShadowView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    insetShadowView.alpha = 0.0;
+    self.glassInsetShadowView = insetShadowView;
+    [glassThumbView addSubview:insetShadowView];
+    return glassThumbView;
+}
+
+- (void)releaseGlassThumbViewIfIdle {
+    if (!self.glassThumbView || [self shouldRenderGlassBackdrop]) return;
+    self.glassThumbView.sourceImage = nil;
+    [self.glassThumbView removeFromSuperview];
+    self.glassThumbView = nil;
+    self.glassInsetShadowView = nil;
 }
 
 - (void)applyVisualsAllowingImplicitAnimations:(BOOL)allowAnimations {
@@ -581,8 +605,12 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
                                    self.renderedThumbSize.height);
 
     self.contractedThumbView.layer.cornerRadius = 12.0;
-    self.glassThumbView.cornerRadius = CGRectGetHeight(glassFrame) * 0.5;
-    self.glassThumbView.hidden = NO;
+    BOOL glassActive = [self shouldRenderGlassBackdrop] || self.renderedExpansion > 0.001;
+    LGSharedGlassView *glassThumbView = glassActive ? [self ensureGlassThumbView] : nil;
+    if (glassThumbView) {
+        glassThumbView.cornerRadius = CGRectGetHeight(glassFrame) * 0.5;
+        glassThumbView.hidden = NO;
+    }
     self.contractedThumbView.hidden = NO;
 
     CGFloat visualExpansion = LASGSmooth(self.renderedExpansion);
@@ -591,7 +619,7 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
         self.renderedExpansion = 0.0;
     }
 
-    BOOL glassActive = [self shouldRenderGlassBackdrop] || visualExpansion > 0.001;
+    glassActive = glassActive || visualExpansion > 0.001;
     if (glassActive && visualExpansion > 0.001) {
         CGFloat visualScale = 0.92 + (0.08 * visualExpansion);
         CGRect cutoutFrame = CGRectOffset(glassFrame, -CGRectGetMinX(trackFrame), -CGRectGetMinY(trackFrame));
@@ -611,19 +639,22 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
     }
 
     self.contractedThumbView.frame = contractedFrame;
-    self.glassThumbView.frame = glassFrame;
-    self.glassThumbView.alpha = glassActive ? (visualExpansion * 0.90) : 0.0;
+    if (glassThumbView) {
+        glassThumbView.frame = glassFrame;
+        glassThumbView.alpha = glassActive ? (visualExpansion * 0.90) : 0.0;
+        glassThumbView.transform = CGAffineTransformMakeScale(0.92 + (0.08 * visualExpansion),
+                                                              0.92 + (0.08 * visualExpansion));
+        glassThumbView.hidden = !glassActive;
+    }
     self.contractedThumbView.alpha = 1.0 - visualExpansion;
-    self.glassThumbView.transform = CGAffineTransformMakeScale(0.92 + (0.08 * visualExpansion),
-                                                               0.92 + (0.08 * visualExpansion));
     self.contractedThumbView.transform = CGAffineTransformMakeScale(1.0 + (0.06 * visualExpansion),
                                                                     1.0 + (0.06 * visualExpansion));
-    self.glassThumbView.hidden = !glassActive;
     self.contractedThumbView.hidden = visualExpansion > 0.99;
-    if (self.glassThumbView.hidden) {
+    if (!glassActive) {
         self.cachedBackdropImage = nil;
         self.cachedBackdropKey = nil;
         self.glassThumbView.sourceImage = nil;
+        [self releaseGlassThumbViewIfIdle];
     }
     self.alpha = self.hostSwitch.enabled ? 1.0 : 0.5;
 }
