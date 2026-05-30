@@ -151,6 +151,21 @@ static BOOL LASGColorLooksTooDarkForAccent(UIColor *color) {
     return a > 0.01 && r < 0.12 && g < 0.12 && b < 0.12;
 }
 
+static NSString *LASGColorCacheComponent(UIColor *color) {
+    CGFloat r = 0.0, g = 0.0, b = 0.0, a = 0.0;
+    if (![color getRed:&r green:&g blue:&b alpha:&a]) {
+        CGFloat white = 0.0;
+        if ([color getWhite:&white alpha:&a]) {
+            r = g = b = white;
+        }
+    }
+    return [NSString stringWithFormat:@"%03d-%03d-%03d-%03d",
+            (int)lrint(LASGClamp(r, 0.0, 1.0) * 255.0),
+            (int)lrint(LASGClamp(g, 0.0, 1.0) * 255.0),
+            (int)lrint(LASGClamp(b, 0.0, 1.0) * 255.0),
+            (int)lrint(LASGClamp(a, 0.0, 1.0) * 255.0)];
+}
+
 static void LASGPerformSwitchHaptic(void) {
     if (@available(iOS 10.0, *)) {
         UISelectionFeedbackGenerator *generator = [UISelectionFeedbackGenerator new];
@@ -275,6 +290,9 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
 @property (nonatomic, assign) CGFloat fillAnimationStartAlpha;
 @property (nonatomic, assign) CFTimeInterval fillAnimationStartTime;
 @property (nonatomic, assign) CFTimeInterval lastDisplayLinkTimestamp;
+@property (nonatomic, strong) UIImage *cachedBackdropImage;
+@property (nonatomic, copy) NSString *cachedBackdropKey;
+@property (nonatomic, assign) CGPoint cachedBackdropOrigin;
 @property (nonatomic, assign) BOOL fillAnimating;
 @property (nonatomic, assign) BOOL pressed;
 @property (nonatomic, assign) BOOL hasRenderedState;
@@ -473,6 +491,8 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
 - (void)refreshGlassBackdrop {
     UISwitch *switchView = self.hostSwitch;
     if (!switchView.window || ![self shouldRenderGlassBackdrop]) {
+        self.cachedBackdropImage = nil;
+        self.cachedBackdropKey = nil;
         self.glassThumbView.sourceImage = nil;
         return;
     }
@@ -484,8 +504,28 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
     UIColor *sheenColor = LASGSwitchBackdropSheenColor(switchView.traitCollection);
     UIColor *liftColor = LASGSwitchGlassLiftColor(switchView.traitCollection);
     CGRect localTrackRect = CGRectOffset(trackFrame, -CGRectGetMinX(captureRect), -CGRectGetMinY(captureRect));
-    UIColor *fillColor = [baseFillColor colorWithAlphaComponent:self.renderedFillAlpha];
+    CGFloat fillAlphaBucket = lrint(LASGClamp(self.renderedFillAlpha, 0.0, 1.0) * 32.0) / 32.0;
+    UIColor *fillColor = [baseFillColor colorWithAlphaComponent:fillAlphaBucket];
     CGFloat fillEndX = CGRectGetMaxX(localTrackRect);
+    NSString *cacheKey = [NSString stringWithFormat:@"%.1fx%.1f|%.1f|%@|%@|%@|%@",
+                          captureRect.size.width,
+                          captureRect.size.height,
+                          fillAlphaBucket,
+                          LASGColorCacheComponent(trackColor),
+                          LASGColorCacheComponent(fillColor),
+                          LASGColorCacheComponent(sheenColor),
+                          LASGColorCacheComponent(liftColor)];
+    CGPoint origin = [self convertPoint:captureRect.origin toView:nil];
+
+    if ([self.cachedBackdropKey isEqualToString:cacheKey] && self.cachedBackdropImage) {
+        if (fabs(self.cachedBackdropOrigin.x - origin.x) > 0.001 ||
+            fabs(self.cachedBackdropOrigin.y - origin.y) > 0.001) {
+            self.cachedBackdropOrigin = origin;
+            self.glassThumbView.sourceOrigin = origin;
+        }
+        return;
+    }
+
     UIImage *image = LASGRenderSwitchBackdropImage(captureRect.size,
                                                   backgroundColor,
                                                   trackColor,
@@ -495,8 +535,11 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
                                                   localTrackRect,
                                                   fillEndX,
                                                   0.75);
+    self.cachedBackdropImage = image;
+    self.cachedBackdropKey = cacheKey;
+    self.cachedBackdropOrigin = origin;
     self.glassThumbView.sourceImage = image;
-    self.glassThumbView.sourceOrigin = [self convertPoint:captureRect.origin toView:nil];
+    self.glassThumbView.sourceOrigin = origin;
     [self.glassThumbView scheduleDraw];
 }
 
@@ -562,6 +605,8 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
     self.glassThumbView.hidden = !glassActive;
     self.contractedThumbView.hidden = visualExpansion > 0.99;
     if (self.glassThumbView.hidden) {
+        self.cachedBackdropImage = nil;
+        self.cachedBackdropKey = nil;
         self.glassThumbView.sourceImage = nil;
     }
     self.alpha = self.hostSwitch.enabled ? 1.0 : 0.5;
@@ -843,21 +888,19 @@ static void LASGPreferencesChanged(CFNotificationCenterRef center, void *observe
 }
 
 - (void)setOn:(BOOL)on animated:(BOOL)animated {
-    BOOL wasOn = self.isOn;
     BOOL isTracking = LASGIsPressed(self) || objc_getAssociatedObject(self, kLASGInitialOnKey);
     BOOL isAnimatingTap = LASGIsAnimatingTap(self);
     %orig;
-    BOOL changed = wasOn != self.isOn;
     if (isAnimatingTap) {
         return;
     }
-    if (changed && animated && !isTracking && !isAnimatingTap) {
-        objc_setAssociatedObject(self, kLASGProgressKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        LASGApplySwitchStyling(self, NO);
-        LASGAnimateTap(self, wasOn, self.isOn, NO);
-    } else {
-        LASGApplySwitchStyling(self, animated);
-    }
+
+    // Only the explicit touch path should run the liquid pressed/expanded animation.
+    // Alarm/Settings tables often refresh or reuse multiple UISwitch instances via
+    // setOn:animated:, and treating those programmatic syncs as taps makes unrelated
+    // switches visually slide even when their real state did not change.
+    objc_setAssociatedObject(self, kLASGProgressKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    LASGApplySwitchStyling(self, isTracking ? animated : NO);
 }
 
 - (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {

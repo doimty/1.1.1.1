@@ -10,6 +10,7 @@ on:
       - '.github/workflows/build.yml'
       - '**/*.h'
       - '**/*.m'
+      - '**/*.x'
       - '**/*.xm'
       - '**/*.plist'
       - '**/*.strings'
