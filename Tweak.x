@@ -10,6 +10,7 @@ static NSString *const kLASGPrefsDomain = @"com.tougee.liquidglassswitch";
 static CFStringRef const kLASGPrefsChangedNotification = CFSTR("com.tougee.liquidglassswitch/preferences.changed");
 
 static BOOL gLASGEnabled = YES;
+static __weak UISwitch *gLASGActiveSwitch = nil;
 static const void *kLASGOverlayKey = &kLASGOverlayKey;
 static const void *kLASGAppearanceKey = &kLASGAppearanceKey;
 static const void *kLASGPressedKey = &kLASGPressedKey;
@@ -300,6 +301,7 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
 - (void)applyVisualsAllowingImplicitAnimations:(BOOL)allowAnimations;
 - (LGSharedGlassView *)ensureGlassThumbView;
 - (void)releaseGlassThumbViewIfIdle;
+- (void)forceStaticProgress:(CGFloat)progress on:(BOOL)on;
 - (void)stopDisplayLink;
 @end
 
@@ -560,11 +562,23 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
 }
 
 - (void)releaseGlassThumbViewIfIdle {
+    // Do not tear down the MTKView immediately after the liquid animation ends.
+    // Creating/removing Metal views and textures at the tail of a tap causes the
+    // visible one-frame hitch the user reported. We only clear the source image;
+    // the overlay itself is removed when UIKit removes/reuses the UISwitch.
     if (!self.glassThumbView || [self shouldRenderGlassBackdrop]) return;
     self.glassThumbView.sourceImage = nil;
-    [self.glassThumbView removeFromSuperview];
-    self.glassThumbView = nil;
-    self.glassInsetShadowView = nil;
+}
+
+- (void)forceStaticProgress:(CGFloat)progress on:(BOOL)on {
+    [self stopDisplayLink];
+    self.pressed = NO;
+    self.targetProgress = progress;
+    self.targetExpansion = 0.0;
+    self.targetThumbSize = LASGRestThumbSize();
+    self.targetFillAlpha = on ? 1.0 : 0.0;
+    [self syncRenderedStateImmediately];
+    [self applyVisualsAllowingImplicitAnimations:NO];
 }
 
 - (void)applyVisualsAllowingImplicitAnimations:(BOOL)allowAnimations {
@@ -661,6 +675,11 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
 
 - (void)syncWithSwitch:(UISwitch *)switchView progress:(CGFloat)progress pressed:(BOOL)pressed animated:(BOOL)animated {
     self.hostSwitch = switchView;
+    BOOL ownsActiveTouch = (gLASGActiveSwitch == switchView);
+    if (!ownsActiveTouch && !LASGIsAnimatingTap(switchView)) {
+        pressed = NO;
+        animated = NO;
+    }
     self.pressed = pressed;
     [self updateMaterialColors];
 
@@ -821,6 +840,11 @@ static void LASGApplySwitchStyling(UISwitch *switchView, BOOL animated) {
     LASGSwitchOverlay *overlay = LASGEnsureOverlay(switchView);
     LASGSetSystemSubviewsHidden(switchView, YES);
     [switchView bringSubviewToFront:overlay];
+    BOOL ownsActiveTouch = (gLASGActiveSwitch == switchView);
+    if (!ownsActiveTouch && !LASGIsAnimatingTap(switchView)) {
+        [overlay forceStaticProgress:switchView.isOn ? 1.0 : 0.0 on:switchView.isOn];
+        return;
+    }
     [overlay syncWithSwitch:switchView
                    progress:LASGCurrentProgress(switchView)
                     pressed:LASGIsPressed(switchView)
@@ -862,6 +886,7 @@ static void LASGAnimateTap(UISwitch *switchView, BOOL fromOn, BOOL toOn, BOOL up
             [overlay syncWithSwitch:switchView progress:endProgress pressed:NO animated:NO];
             objc_setAssociatedObject(switchView, kLASGAnimatingTapKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             objc_setAssociatedObject(switchView, kLASGTapGenerationKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            if (gLASGActiveSwitch == switchView) gLASGActiveSwitch = nil;
         });
     });
 }
@@ -949,6 +974,7 @@ static void LASGPreferencesChanged(CFNotificationCenterRef center, void *observe
 
 - (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
     (void)%orig;
+    gLASGActiveSwitch = self;
     CGFloat initialProgress = self.isOn ? 1.0 : 0.0;
     CGFloat startCenterX = LASGMinimumThumbCenterXForBounds(self.bounds) +
         ((LASGMaximumThumbCenterXForBounds(self.bounds) - LASGMinimumThumbCenterXForBounds(self.bounds)) * initialProgress);
@@ -995,6 +1021,7 @@ static void LASGPreferencesChanged(CFNotificationCenterRef center, void *observe
         objc_setAssociatedObject(self, kLASGDragStartCenterXKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         LASGSetProgress(self, desiredOn ? 1.0 : 0.0);
         LASGApplySwitchStyling(self, YES);
+        if (gLASGActiveSwitch == self) gLASGActiveSwitch = nil;
     } else {
         BOOL initialOn = LASGInitialOn(self);
         BOOL desiredOn = !initialOn;
@@ -1017,6 +1044,7 @@ static void LASGPreferencesChanged(CFNotificationCenterRef center, void *observe
     objc_setAssociatedObject(self, kLASGDragStartXKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(self, kLASGDragStartCenterXKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     LASGApplySwitchStyling(self, YES);
+    if (gLASGActiveSwitch == self) gLASGActiveSwitch = nil;
 }
 
 - (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
