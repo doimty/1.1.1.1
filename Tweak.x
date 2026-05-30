@@ -120,6 +120,13 @@ static BOOL LASGIsDarkMode(UITraitCollection *traitCollection) {
     return NO;
 }
 
+static BOOL LASGIsClockProcess(void) {
+    NSString *bundleIdentifier = NSBundle.mainBundle.bundleIdentifier.lowercaseString;
+    return [bundleIdentifier isEqualToString:@"com.apple.mobiletimer"] ||
+           [bundleIdentifier containsString:@"mobiletimer"] ||
+           [bundleIdentifier containsString:@"clock"];
+}
+
 static UIColor *LASGSwitchOffTrackColor(UITraitCollection *traitCollection) {
     if (LASGIsDarkMode(traitCollection)) {
         return [UIColor colorWithWhite:1.0 alpha:0.18];
@@ -438,10 +445,10 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
     CFTimeInterval dt = self.lastDisplayLinkTimestamp > 0.0 ? (link.timestamp - self.lastDisplayLinkTimestamp) : (1.0 / 60.0);
     self.lastDisplayLinkTimestamp = link.timestamp;
     CGFloat frameFactor = fmin(MAX(dt * 60.0, 0.35), 1.4);
-    CGFloat progressLerp = (self.pressed ? 0.34 : 0.22) * frameFactor;
-    CGFloat sizeLerp = (self.pressed ? 0.36 : 0.24) * frameFactor;
+    CGFloat progressLerp = (self.pressed ? 0.48 : 0.34) * frameFactor;
+    CGFloat sizeLerp = (self.pressed ? 0.50 : 0.36) * frameFactor;
     BOOL expanding = self.targetExpansion > self.renderedExpansion;
-    CGFloat expansionLerp = ((self.pressed || expanding) ? 0.42 : 0.14) * frameFactor;
+    CGFloat expansionLerp = ((self.pressed || expanding) ? 0.58 : 0.26) * frameFactor;
 
     if (!self.hasRenderedState) {
         [self syncRenderedStateImmediately];
@@ -454,7 +461,7 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
 
     if (self.fillAnimating) {
         CFTimeInterval elapsed = CACurrentMediaTime() - self.fillAnimationStartTime;
-        CGFloat t = LASGClamp(elapsed / 0.1, 0.0, 1.0);
+        CGFloat t = LASGClamp(elapsed / 0.07, 0.0, 1.0);
         CGFloat eased = LASGSmooth(t);
         self.renderedFillAlpha = self.fillAnimationStartAlpha + ((self.targetFillAlpha - self.fillAnimationStartAlpha) * eased);
         if (t >= 1.0) {
@@ -677,7 +684,7 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
 - (void)syncWithSwitch:(UISwitch *)switchView progress:(CGFloat)progress pressed:(BOOL)pressed animated:(BOOL)animated {
     self.hostSwitch = switchView;
     BOOL ownsActiveTouch = (gLASGActiveSwitch == switchView);
-    if (!ownsActiveTouch && !LASGIsAnimatingTap(switchView)) {
+    if (LASGIsClockProcess() || (!ownsActiveTouch && !LASGIsAnimatingTap(switchView))) {
         pressed = NO;
         animated = NO;
     }
@@ -842,7 +849,7 @@ static void LASGApplySwitchStyling(UISwitch *switchView, BOOL animated) {
     LASGSetSystemSubviewsHidden(switchView, YES);
     [switchView bringSubviewToFront:overlay];
     BOOL ownsActiveTouch = (gLASGActiveSwitch == switchView);
-    if (!ownsActiveTouch && !LASGIsAnimatingTap(switchView)) {
+    if (LASGIsClockProcess() || (!ownsActiveTouch && !LASGIsAnimatingTap(switchView))) {
         [overlay forceStaticProgress:switchView.isOn ? 1.0 : 0.0 on:switchView.isOn];
         return;
     }
@@ -875,13 +882,13 @@ static void LASGAnimateTap(UISwitch *switchView, BOOL fromOn, BOOL toOn, BOOL up
     LASGSetProgress(switchView, endProgress);
     [overlay syncWithSwitch:switchView progress:endProgress pressed:YES animated:YES];
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.24 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.16 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if ([objc_getAssociatedObject(switchView, kLASGTapGenerationKey) unsignedIntegerValue] != generation) return;
         objc_setAssociatedObject(switchView, kLASGPressedKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         objc_setAssociatedObject(switchView, kLASGInitialOnKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         LASGSetProgress(switchView, endProgress);
         [overlay syncWithSwitch:switchView progress:endProgress pressed:NO animated:YES];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.34 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.20 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if ([objc_getAssociatedObject(switchView, kLASGTapGenerationKey) unsignedIntegerValue] != generation) return;
             LASGSetProgress(switchView, endProgress);
             [overlay syncWithSwitch:switchView progress:endProgress pressed:NO animated:NO];
@@ -974,6 +981,11 @@ static void LASGPreferencesChanged(CFNotificationCenterRef center, void *observe
 }
 
 - (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
+    if (LASGIsClockProcess()) {
+        BOOL result = %orig;
+        LASGApplySwitchStyling(self, NO);
+        return result;
+    }
     (void)%orig;
     gLASGActiveSwitch = self;
     CGFloat initialProgress = self.isOn ? 1.0 : 0.0;
@@ -991,6 +1003,11 @@ static void LASGPreferencesChanged(CFNotificationCenterRef center, void *observe
 }
 
 - (BOOL)continueTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
+    if (LASGIsClockProcess()) {
+        BOOL result = %orig;
+        LASGApplySwitchStyling(self, NO);
+        return result;
+    }
     (void)%orig;
     CGFloat progress = LASGTouchProgress(self, touch);
     LASGSetProgress(self, progress);
@@ -1003,6 +1020,15 @@ static void LASGPreferencesChanged(CFNotificationCenterRef center, void *observe
 }
 
 - (void)endTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
+    if (LASGIsClockProcess()) {
+        %orig;
+        objc_setAssociatedObject(self, kLASGPressedKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(self, kLASGDidDragKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(self, kLASGInitialOnKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(self, kLASGProgressKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        LASGApplySwitchStyling(self, NO);
+        return;
+    }
     (void)event;
     if (LASGDidDrag(self)) {
         CGFloat finalProgress = touch ? LASGTouchProgress(self, touch) : LASGCurrentProgress(self);
@@ -1035,6 +1061,15 @@ static void LASGPreferencesChanged(CFNotificationCenterRef center, void *observe
 }
 
 - (void)cancelTrackingWithEvent:(UIEvent *)event {
+    if (LASGIsClockProcess()) {
+        %orig;
+        objc_setAssociatedObject(self, kLASGPressedKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(self, kLASGDidDragKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(self, kLASGInitialOnKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(self, kLASGProgressKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        LASGApplySwitchStyling(self, NO);
+        return;
+    }
     (void)event;
     objc_setAssociatedObject(self, kLASGPressedKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(self, kLASGDidDragKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
