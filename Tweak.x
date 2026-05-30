@@ -11,6 +11,7 @@ static CFStringRef const kLASGPrefsChangedNotification = CFSTR("com.tougee.liqui
 
 static BOOL gLASGEnabled = YES;
 static __weak UISwitch *gLASGActiveSwitch = nil;
+static BOOL LASGIsAnimatingTap(UISwitch *switchView);
 static const void *kLASGOverlayKey = &kLASGOverlayKey;
 static const void *kLASGAppearanceKey = &kLASGAppearanceKey;
 static const void *kLASGPressedKey = &kLASGPressedKey;
