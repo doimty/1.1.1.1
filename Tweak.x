@@ -297,6 +297,7 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
 @property (nonatomic, assign) BOOL pressed;
 @property (nonatomic, assign) BOOL hasRenderedState;
 - (void)syncWithSwitch:(UISwitch *)switchView progress:(CGFloat)progress pressed:(BOOL)pressed animated:(BOOL)animated;
+- (void)applyVisualsAllowingImplicitAnimations:(BOOL)allowAnimations;
 - (void)stopDisplayLink;
 @end
 
@@ -474,8 +475,7 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
         }
     }
 
-    [self refreshGlassBackdrop];
-    [self updateVisuals];
+    [self applyVisualsAllowingImplicitAnimations:YES];
 
     BOOL settledProgress = fabs(self.targetProgress - self.renderedProgress) < 0.002;
     BOOL settledWidth = fabs(self.targetThumbSize.width - self.renderedThumbSize.width) < 0.05;
@@ -541,6 +541,22 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
     self.glassThumbView.sourceImage = image;
     self.glassThumbView.sourceOrigin = origin;
     [self.glassThumbView scheduleDraw];
+}
+
+- (void)applyVisualsAllowingImplicitAnimations:(BOOL)allowAnimations {
+    if (allowAnimations) {
+        [self refreshGlassBackdrop];
+        [self updateVisuals];
+        return;
+    }
+
+    [UIView performWithoutAnimation:^{
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        [self refreshGlassBackdrop];
+        [self updateVisuals];
+        [CATransaction commit];
+    }];
 }
 
 - (void)updateVisuals {
@@ -631,23 +647,20 @@ static UIImage *LASGRenderSwitchBackdropImage(CGSize size,
         [self startDisplayLinkIfNeeded];
     }
 
-    [self refreshGlassBackdrop];
-    [self updateVisuals];
+    [self applyVisualsAllowingImplicitAnimations:animated];
 }
 
 - (void)didMoveToWindow {
     [super didMoveToWindow];
     if (!self.window) [self stopDisplayLink];
-    [self refreshGlassBackdrop];
-    [self updateVisuals];
+    [self applyVisualsAllowingImplicitAnimations:NO];
 }
 
 - (void)layoutSubviews {
     [super layoutSubviews];
     [self updateMaterialColors];
     if (!self.hasRenderedState) [self syncRenderedStateImmediately];
-    [self refreshGlassBackdrop];
-    [self updateVisuals];
+    [self applyVisualsAllowingImplicitAnimations:NO];
 }
 
 @end
